@@ -8,7 +8,6 @@ import {
   IndianRupee,
   Save,
   Search,
-  FileText,
   X,
   Menu,
   Calculator,
@@ -18,13 +17,19 @@ import {
   ClipboardCheck,
   LogOut,
   LogIn,
-  Download
+  Download,
+  Share2,
+  FileText
 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { utils, write } from 'xlsx';
 import { initializeApp } from 'firebase/app';
 import {
   getAuth,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider,
   signOut,
   onAuthStateChanged
@@ -74,18 +79,29 @@ const MONTHS = [
 // --- Main Application Component ---
 export default function JewelryManager() {
   const [user, setUser] = useState(null);
-  const [view, setView] = useState('new-sale'); // 'new-sale' | 'history'
+  const [view, setView] = useState('new-sale');
   const [sales, setSales] = useState([]);
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [selectedSale, setSelectedSale] = useState(null); // For viewing receipt details
+  const [selectedSale, setSelectedSale] = useState(null);
 
   // --- Authentication ---
   useEffect(() => {
-    // Listen for auth state changes
+    // 1. Check for Redirect Result (Mobile Login Flow)
+    getRedirectResult(auth).then((result) => {
+      if (result) {
+        // User successfully signed in via redirect
+        setUser(result.user);
+      }
+    }).catch((error) => {
+      console.error("Redirect Auth Error:", error);
+      alert("Login Failed: " + error.message);
+    });
+
+    // 2. Listen for auth state changes
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
-      setLoading(false); // Stop loading once auth state is determined
+      setLoading(false);
     });
     return () => unsubscribe();
   }, []);
@@ -93,11 +109,20 @@ export default function JewelryManager() {
   const handleLogin = async () => {
     try {
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      // Detect Mobile Device
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+      if (isMobile) {
+        // Use Redirect on Mobile (More reliable than popup)
+        await signInWithRedirect(auth, provider);
+      } else {
+        // Use Popup on Desktop (Better UX)
+        await signInWithPopup(auth, provider);
+      }
     } catch (error) {
       console.error("Login Failed:", error);
       if (error.code === 'auth/operation-not-allowed') {
-        alert("Configuration Error: Google Sign-In is not enabled in the Firebase Console. Please enable it in Authentication > Sign-in method.");
+        alert("Configuration Error: Google Sign-In is not enabled in Firebase Console.");
       } else {
         alert(`Login failed: ${error.message}`);
       }
@@ -645,6 +670,79 @@ function SalesHistory({ sales, loading, onSelect }) {
     return Array.from(years).sort((a, b) => b - a);
   }, [sales, currentYear]);
 
+  // --- PDF Invoice Generation ---
+  const handleGenerateInvoice = (sale) => {
+    const doc = new jsPDF();
+
+    // Header
+    doc.setFontSize(22);
+    doc.setTextColor(40, 40, 40);
+    doc.text("Gold Ledger Invoice", 105, 20, null, null, "center");
+
+    doc.setFontSize(12);
+    doc.setTextColor(100, 100, 100);
+    doc.text(`Date: ${sale.timestamp.toLocaleDateString()}`, 105, 30, null, null, "center");
+
+    // Customer Details
+    doc.setFontSize(14);
+    doc.setTextColor(0, 0, 0);
+    doc.text("Customer Details:", 14, 45);
+    doc.setFontSize(10);
+    doc.text(`Name: ${sale.customerName}`, 14, 52);
+    doc.text(`Phone: ${sale.customerPhone}`, 14, 57);
+
+    // Calculation Data
+    const isManual = typeof sale.itemBasePrice === 'number';
+    const basePrice = isManual ? sale.itemBasePrice : (sale.weight * sale.goldRate);
+    const gst = isManual ? sale.gstAmount : 'N/A';
+    const discount = isManual ? sale.discountAmount : 'N/A';
+    const finalPrice = getFinalPrice(sale);
+
+    // Table
+    autoTable(doc, {
+      startY: 65,
+      head: [['Item', 'HUID', 'Details', 'Price (INR)']],
+      body: [
+        [sale.itemName, sale.huid || '-', 'Base Price', basePrice.toLocaleString('en-IN')],
+        ['', '', 'GST Amount', typeof gst === 'number' ? `+ ${gst.toFixed(2)}` : gst],
+        ['', '', 'Discount', typeof discount === 'number' ? `- ${discount.toFixed(2)}` : discount],
+        ['', '', 'Final Total', { content: finalPrice.toLocaleString('en-IN'), styles: { fontStyle: 'bold', textColor: [0, 0, 0] } }]
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [245, 158, 11] }, // Amber 500
+      footStyles: { fillColor: [245, 158, 11] }
+    });
+
+    // Footer
+    const finalY = doc.lastAutoTable.finalY || 150;
+    doc.setFontSize(10);
+    doc.setTextColor(150, 150, 150);
+    doc.text("Thank you for your business!", 105, finalY + 20, null, null, "center");
+
+    doc.save(`Invoice_${sale.customerName.replace(/\s+/g, '_')}_${sale.timestamp.getTime()}.pdf`);
+  };
+
+  // --- WhatsApp Sharing ---
+  // --- WhatsApp Sharing ---
+  const handleShareWhatsApp = (sale) => {
+    // 1. Trigger the PDF download automatically
+    handleGenerateInvoice(sale);
+
+    // 2. Prepare WhatsApp Message
+    const finalPrice = getFinalPrice(sale);
+    const message = `Hello ${sale.customerName}, here is your invoice for ${sale.itemName}. Total Amount: ₹${finalPrice.toLocaleString('en-IN')}. Please find the PDF attached below.`;
+    const encodedMessage = encodeURIComponent(message);
+    const url = `https://wa.me/91${sale.customerPhone}?text=${encodedMessage}`;
+
+    // 3. Open WhatsApp and instruct user
+    setTimeout(() => {
+      window.open(url, '_blank');
+      alert("⬇️ PDF Downloaded!\n\nWhatsApp does not allow automatic file attaching.\n\nPlease drag and drop the downloaded invoice into the WhatsApp chat.");
+    }, 500);
+  };
+
+  // --- Filter Logic ---
+
   const filteredSales = useMemo(() => {
     if (!searchTerm) return sales;
     const lower = searchTerm.toLowerCase();
@@ -729,8 +827,8 @@ function SalesHistory({ sales, loading, onSelect }) {
     // Generate File (Explicit Blob Method)
     try {
       const wbout = write(wb, { bookType: 'xlsx', type: 'array' });
-      // CORRECT MIME TYPE for .xlsx
-      const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      // CORRECT MIME TYPE for .xlsx + Cast to Uint8Array for safety
+      const blob = new Blob([new Uint8Array(wbout)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 
       const fileName = `GoldLedger_Report_${MONTHS[selectedMonth]}_${selectedYear}.xlsx`;
 
@@ -747,6 +845,7 @@ function SalesHistory({ sales, loading, onSelect }) {
       setExportMessage(`Downloaded Excel: ${monthlySales.length} records.`);
     } catch (error) {
       console.error("Export Error:", error);
+      alert("Excel Export Failed: " + error.message);
       setExportMessage("Error generating Excel file.");
     }
 
@@ -755,68 +854,75 @@ function SalesHistory({ sales, loading, onSelect }) {
 
   // --- CSV Export Fallback ---
   const handleExportCSV = () => {
-    const monthlySales = sales.filter(sale =>
-      sale.timestamp.getMonth() === selectedMonth &&
-      sale.timestamp.getFullYear() === selectedYear
-    );
+    try {
+      const monthlySales = sales.filter(sale =>
+        sale.timestamp.getMonth() === selectedMonth &&
+        sale.timestamp.getFullYear() === selectedYear
+      );
 
-    if (monthlySales.length === 0) {
-      setExportMessage(`No sales found for ${MONTHS[selectedMonth]}, ${selectedYear}.`);
-      setTimeout(() => setExportMessage(''), 3000);
-      return;
+      if (monthlySales.length === 0) {
+        alert(`No sales data found for ${MONTHS[selectedMonth]} ${selectedYear}`);
+        return;
+      }
+
+      // ... (headers definition)
+      // Define Headers
+      const headers = [
+        "Date", "Customer Name", "Phone", "Item Name", "HUID",
+        "Base Price", "GST Amount", "Discount", "Final Price", "Notes"
+      ];
+
+      // Format Rows
+      const rows = monthlySales.map(sale => {
+        // ... (rest of mapping logic same)
+        const isNewManualSale = typeof sale.itemBasePrice === 'number';
+        const basePrice = isNewManualSale ? sale.itemBasePrice : ((sale.weight || 0) * (sale.goldRate || 0));
+        const gstAmount = isNewManualSale ? sale.gstAmount : 'N/A';
+        const discount = isNewManualSale ? sale.discountAmount : 'N/A';
+        const finalPrice = getFinalPrice(sale);
+
+        // Escape commas and quotes for CSV
+        const escape = (val) => {
+          const str = String(val || '');
+          if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+            return `"${str.replace(/"/g, '""')}"`;
+          }
+          return str;
+        };
+
+        return [
+          sale.timestamp.toLocaleDateString(),
+          sale.customerName,
+          sale.customerPhone,
+          sale.itemName,
+          sale.huid,
+          basePrice,
+          gstAmount,
+          discount,
+          finalPrice,
+          sale.notes
+        ].map(escape);
+      });
+
+      // Combine
+      const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+
+      // Download with BOM for Excel UTF-8 compatibility
+      const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `GoldLedger_Report_${MONTHS[selectedMonth]}_${selectedYear}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      setExportMessage(`Downloaded CSV: ${monthlySales.length} records.`);
+    } catch (error) {
+      console.error("CSV Export Error:", error);
+      alert("CSV Export Failed: " + error.message);
+      setExportMessage("Error generating CSV file.");
     }
-
-    // Define Headers
-    const headers = [
-      "Date", "Customer Name", "Phone", "Item Name", "HUID",
-      "Base Price", "GST Amount", "Discount", "Final Price", "Notes"
-    ];
-
-    // Format Rows
-    const rows = monthlySales.map(sale => {
-      const isNewManualSale = typeof sale.itemBasePrice === 'number';
-      const basePrice = isNewManualSale ? sale.itemBasePrice : ((sale.weight || 0) * (sale.goldRate || 0));
-      const gstAmount = isNewManualSale ? sale.gstAmount : 'N/A';
-      const discount = isNewManualSale ? sale.discountAmount : 'N/A';
-      const finalPrice = getFinalPrice(sale);
-
-      // Escape commas and quotes for CSV
-      const escape = (val) => {
-        const str = String(val || '');
-        if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-          return `"${str.replace(/"/g, '""')}"`;
-        }
-        return str;
-      };
-
-      return [
-        sale.timestamp.toLocaleDateString(),
-        sale.customerName,
-        sale.customerPhone,
-        sale.itemName,
-        sale.huid,
-        basePrice,
-        gstAmount,
-        discount,
-        finalPrice,
-        sale.notes
-      ].map(escape);
-    });
-
-    // Combine
-    const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
-
-    // Download
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `GoldLedger_Report_${MONTHS[selectedMonth]}_${selectedYear}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
-    setExportMessage(`Downloaded CSV: ${monthlySales.length} records.`);
   };
 
 
@@ -943,13 +1049,29 @@ function SalesHistory({ sales, loading, onSelect }) {
                       </span>
                     </td>
                     <td className="p-4 text-center">
-                      <button
-                        onClick={() => onSelect(sale)}
-                        className="p-2 hover:bg-slate-100 rounded-lg text-amber-600 transition-colors"
-                        title="View Receipt"
-                      >
-                        <FileText size={18} />
-                      </button>
+                      <div className="flex justify-center gap-2">
+                        <button
+                          onClick={() => onSelect(sale)}
+                          className="p-2 hover:bg-slate-100 rounded-lg text-amber-600 transition-colors"
+                          title="View Receipt"
+                        >
+                          <FileText size={18} />
+                        </button>
+                        <button
+                          onClick={() => handleGenerateInvoice(sale)}
+                          className="p-2 hover:bg-slate-100 rounded-lg text-blue-600 transition-colors"
+                          title="Download PDF Invoice"
+                        >
+                          <Download size={18} />
+                        </button>
+                        <button
+                          onClick={() => handleShareWhatsApp(sale)}
+                          className="p-2 hover:bg-slate-100 rounded-lg text-green-600 transition-colors"
+                          title="Share on WhatsApp"
+                        >
+                          <Share2 size={18} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
