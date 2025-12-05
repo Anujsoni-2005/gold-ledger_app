@@ -17,8 +17,10 @@ import {
   MessageSquare,
   ClipboardCheck,
   LogOut,
-  LogIn
+  LogIn,
+  Download
 } from 'lucide-react';
+import { utils, write } from 'xlsx';
 import { initializeApp } from 'firebase/app';
 import {
   getAuth,
@@ -667,6 +669,7 @@ function SalesHistory({ sales, loading, onSelect }) {
   }
 
   // --- Export Logic ---
+  // --- Export Logic (Excel) ---
   const handleExport = () => {
     const monthlySales = sales.filter(sale =>
       sale.timestamp.getMonth() === selectedMonth &&
@@ -679,57 +682,144 @@ function SalesHistory({ sales, loading, onSelect }) {
       return;
     }
 
-    // Define the header row (using tab '\t' as separator)
-    const header = [
-      "Date", "Customer Name", "Phone", "Item Name", "HUID",
-      "Base Price (₹)", "GST Amount (₹)", "Discount (₹)", "Final Price (₹)", "Notes"
-    ].join('\t');
-
-    // Format the data rows
-    const dataRows = monthlySales.map(sale => {
-      // Determine if it's the new manual format for accurate column data
+    // Format Data for Excel
+    const dataForExcel = monthlySales.map(sale => {
       const isNewManualSale = typeof sale.itemBasePrice === 'number';
-
-      const dateStr = sale.timestamp.toLocaleDateString();
       const basePrice = isNewManualSale ? sale.itemBasePrice : ((sale.weight || 0) * (sale.goldRate || 0));
       const gstAmount = isNewManualSale ? sale.gstAmount : 'N/A';
       const discount = isNewManualSale ? sale.discountAmount : 'N/A';
       const finalPrice = getFinalPrice(sale);
 
-      return [
-        dateStr,
-        sale.customerName,
-        sale.customerPhone || '',
-        sale.itemName,
-        sale.huid || '',
-        basePrice.toFixed(2),
-        typeof gstAmount === 'number' ? gstAmount.toFixed(2) : gstAmount,
-        typeof discount === 'number' ? discount.toFixed(2) : discount,
-        finalPrice.toFixed(2),
-        sale.notes || ''
-      ].join('\t');
-    }).join('\n');
+      return {
+        "Date": sale.timestamp.toLocaleDateString(),
+        "Customer Name": sale.customerName,
+        "Phone": sale.customerPhone || '',
+        "Item Name": sale.itemName,
+        "Description/HUID": sale.huid || '',
+        "Base Price (₹)": basePrice,
+        "GST (₹)": gstAmount,
+        "Discount (₹)": discount,
+        "Final Price (₹)": finalPrice,
+        "Notes": sale.notes || ''
+      };
+    });
 
-    const reportContent = `${header}\n${dataRows}`;
+    // Create Worksheet
+    const ws = utils.json_to_sheet(dataForExcel);
 
-    // Copy to clipboard
+    // Auto-width columns (simple heuristic)
+    const wscols = [
+      { wch: 12 }, // Date
+      { wch: 20 }, // Name
+      { wch: 12 }, // Phone
+      { wch: 15 }, // Item
+      { wch: 15 }, // HUID
+      { wch: 12 }, // Base
+      { wch: 10 }, // GST
+      { wch: 10 }, // Disc
+      { wch: 12 }, // Final
+      { wch: 30 }  // Notes
+    ];
+    ws['!cols'] = wscols;
+
+    // Create Workbook
+    const wb = utils.book_new();
+    utils.book_append_sheet(wb, ws, "Sales Report");
+
+    // Generate File (Explicit Blob Method)
     try {
-      // Use a temporary textarea for reliable copying across environments
-      const tempTextArea = document.createElement('textarea');
-      tempTextArea.value = reportContent;
-      document.body.appendChild(tempTextArea);
-      tempTextArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(tempTextArea);
+      const wbout = write(wb, { bookType: 'xlsx', type: 'array' });
+      // CORRECT MIME TYPE for .xlsx
+      const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 
-      setExportMessage(`Successfully copied ${monthlySales.length} records for ${MONTHS[selectedMonth]}.`);
-    } catch (err) {
-      setExportMessage('Failed to copy. Please check console for details.');
-      console.error('Copy command failed:', err);
+      const fileName = `GoldLedger_Report_${MONTHS[selectedMonth]}_${selectedYear}.xlsx`;
+
+      // Manual Download Trigger
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      setExportMessage(`Downloaded Excel: ${monthlySales.length} records.`);
+    } catch (error) {
+      console.error("Export Error:", error);
+      setExportMessage("Error generating Excel file.");
     }
 
     setTimeout(() => setExportMessage(''), 3000);
   };
+
+  // --- CSV Export Fallback ---
+  const handleExportCSV = () => {
+    const monthlySales = sales.filter(sale =>
+      sale.timestamp.getMonth() === selectedMonth &&
+      sale.timestamp.getFullYear() === selectedYear
+    );
+
+    if (monthlySales.length === 0) {
+      setExportMessage(`No sales found for ${MONTHS[selectedMonth]}, ${selectedYear}.`);
+      setTimeout(() => setExportMessage(''), 3000);
+      return;
+    }
+
+    // Define Headers
+    const headers = [
+      "Date", "Customer Name", "Phone", "Item Name", "HUID",
+      "Base Price", "GST Amount", "Discount", "Final Price", "Notes"
+    ];
+
+    // Format Rows
+    const rows = monthlySales.map(sale => {
+      const isNewManualSale = typeof sale.itemBasePrice === 'number';
+      const basePrice = isNewManualSale ? sale.itemBasePrice : ((sale.weight || 0) * (sale.goldRate || 0));
+      const gstAmount = isNewManualSale ? sale.gstAmount : 'N/A';
+      const discount = isNewManualSale ? sale.discountAmount : 'N/A';
+      const finalPrice = getFinalPrice(sale);
+
+      // Escape commas and quotes for CSV
+      const escape = (val) => {
+        const str = String(val || '');
+        if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+          return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+      };
+
+      return [
+        sale.timestamp.toLocaleDateString(),
+        sale.customerName,
+        sale.customerPhone,
+        sale.itemName,
+        sale.huid,
+        basePrice,
+        gstAmount,
+        discount,
+        finalPrice,
+        sale.notes
+      ].map(escape);
+    });
+
+    // Combine
+    const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
+
+    // Download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `GoldLedger_Report_${MONTHS[selectedMonth]}_${selectedYear}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    setExportMessage(`Downloaded CSV: ${monthlySales.length} records.`);
+  };
+
+
 
   // --- END Export Logic ---
 
@@ -778,17 +868,24 @@ function SalesHistory({ sales, loading, onSelect }) {
             </select>
           </div>
 
-          <button
-            onClick={handleExport}
-            className="w-full sm:w-1/3 py-3 rounded-xl font-bold flex items-center justify-center gap-2 bg-slate-800 text-white hover:bg-slate-700 transition-colors"
-          >
-            <ClipboardCheck size={20} />
-            Copy Monthly Report
-          </button>
+          <div className="w-full sm:w-1/3 flex gap-2">
+            <button
+              onClick={handleExport}
+              className="flex-1 py-3 rounded-xl font-bold flex items-center justify-center gap-2 bg-green-600 text-white hover:bg-green-700 transition-colors text-sm"
+            >
+              <Download size={18} /> Excel
+            </button>
+            <button
+              onClick={handleExportCSV}
+              className="flex-1 py-3 rounded-xl font-bold flex items-center justify-center gap-2 bg-slate-800 text-white hover:bg-slate-700 transition-colors text-sm"
+            >
+              <FileText size={18} /> CSV
+            </button>
+          </div>
         </div>
 
         {exportMessage && (
-          <p className={`mt-3 text-center text-sm font-medium ${exportMessage.startsWith('Successfully') ? 'text-green-600' : 'text-red-600'}`}>
+          <p className={`mt-3 text-center text-sm font-medium ${exportMessage.startsWith('Downloaded') ? 'text-green-600' : 'text-red-600'}`}>
             {exportMessage}
           </p>
         )}
