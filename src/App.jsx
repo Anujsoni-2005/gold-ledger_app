@@ -106,13 +106,13 @@ export default function JewelryManager() {
     return () => unsubscribe();
   }, []);
 
-  const handleLogin = async () => {
+  const handleLogin = async (forcePopup = false) => {
     try {
       const provider = new GoogleAuthProvider();
       // Detect Mobile Device
       const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
-      if (isMobile) {
+      if (isMobile && !forcePopup) {
         // Use Redirect on Mobile (More reliable than popup)
         await signInWithRedirect(auth, provider);
       } else {
@@ -309,13 +309,22 @@ function LoginPage({ onLogin, loading }) {
         <h2 className="text-2xl font-bold text-slate-900 mb-2">Welcome Back</h2>
         <p className="text-slate-500 mb-8">Sign in to access your synchronized jewelry ledger across all your devices.</p>
 
-        <button
-          onClick={onLogin}
-          className="w-full py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-3 bg-slate-900 text-white hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl active:scale-95"
-        >
-          <LogIn size={20} />
-          Sign in with Google
-        </button>
+        <div className="space-y-3">
+          <button
+            onClick={() => onLogin(false)}
+            className="w-full py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-3 bg-slate-900 text-white hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl active:scale-95"
+          >
+            <LogIn size={20} />
+            Sign in with Google
+          </button>
+
+          <button
+            onClick={() => onLogin(true)}
+            className="w-full py-2 rounded-xl text-sm font-medium text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-colors"
+          >
+            Having trouble? Try Popup Mode
+          </button>
+        </div>
 
         <p className="text-xs text-slate-400 mt-6">
           Secure authentication powered by Firebase
