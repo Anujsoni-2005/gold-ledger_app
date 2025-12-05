@@ -1,140 +1,144 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { 
-  Plus, 
-  History, 
-  Gem, 
-  User, 
-  Phone, 
-  IndianRupee, 
-  Save, 
-  Search, 
-  FileText, 
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Plus,
+  History,
+  Gem,
+  User,
+  Phone,
+  IndianRupee,
+  Save,
+  Search,
+  FileText,
   X,
   Menu,
   Calculator,
   Calendar,
   Hash,
   MessageSquare,
-  ClipboardCheck
+  ClipboardCheck,
+  LogOut,
+  LogIn
 } from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import {
+  getAuth,
+  signInWithPopup,
+  GoogleAuthProvider,
+  signOut,
+  onAuthStateChanged
+} from 'firebase/auth';
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  onSnapshot,
+  serverTimestamp,
+  query
+} from 'firebase/firestore';
 
-// --- Local Storage Utility Functions ---
-const USER_ID_KEY = 'local_jewelry_user_id';
-const SALES_KEY = 'local_jewelry_sales_ledger';
-
-/**
- * Ensures a unique user ID exists in localStorage and returns it.
- * Simulates the Firebase user.uid structure.
- */
-const getLocalUser = () => {
-    let userId = localStorage.getItem(USER_ID_KEY);
-    if (!userId) {
-        // Fallback for environments where crypto.randomUUID might not be available
-        userId = self.crypto.randomUUID ? self.crypto.randomUUID() : Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-        localStorage.setItem(USER_ID_KEY, userId);
-    }
-    // Return an object that mimics the necessary Firebase 'user' structure
-    return { uid: userId };
+// --- Firebase Configuration & Initialization (FIXED FOR LOCAL PC) ---
+// =========================================================================================
+// !!! IMPORTANT: You must replace this MOCK_FIREBASE_CONFIG with your actual Firebase config 
+//               from a project setup on console.firebase.google.com.
+// =========================================================================================
+const MOCK_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAqFM3NL_6QmIuX-iwneymuX7HV2iCyQuc",
+  authDomain: "soni-17936.firebaseapp.com",
+  projectId: "soni-17936",
+  storageBucket: "soni-17936.firebasestorage.app",
+  messagingSenderId: "523566643440",
+  appId: "1:523566643440:web:974cd064f686c86a622a35",
+  measurementId: "G-TFHEFRHZPJ"
 };
 
-/**
- * Loads all sales records from localStorage.
- */
-const getLocalSales = () => {
-  try {
-    const rawData = localStorage.getItem(SALES_KEY);
-    const sales = rawData ? JSON.parse(rawData) : [];
-    
-    // Convert stored numeric timestamp back to Date object for sorting and display
-    return sales.map(sale => ({
-      ...sale,
-      timestamp: new Date(sale.timestamp)
-    }));
+// Check for the environment variable, otherwise use the mock config.
+const firebaseConfig = typeof __firebase_config !== 'undefined'
+  ? JSON.parse(__firebase_config)
+  : MOCK_FIREBASE_CONFIG;
 
-  } catch (error) {
-    console.error("Error reading from localStorage:", error);
-    return [];
-  }
-};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
-/**
- * Adds a new sale record and saves the updated array to localStorage.
- */
-const saveLocalSale = (newSaleData) => {
-  const sales = getLocalSales().map(s => ({
-    ...s,
-    // Convert Date back to sortable number before saving
-    timestamp: s.timestamp.getTime()
-  }));
-
-  const saleToSave = {
-    ...newSaleData,
-    id: self.crypto.randomUUID ? self.crypto.randomUUID() : Date.now().toString() + Math.random().toString(36).substring(2, 5),
-    // Use numeric timestamp (simulates serverTimestamp().toDate())
-    timestamp: new Date().getTime() 
-  };
-
-  sales.push(saleToSave);
-
-  try {
-    localStorage.setItem(SALES_KEY, JSON.stringify(sales));
-    return true;
-  } catch (error) {
-    console.error("Error writing to localStorage:", error);
-    return false;
-  }
-};
-
+// Use the environment ID or a fixed local ID
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'local-jewelry-manager-app';
 
 // --- Helper Data ---
 const MONTHS = [
-    "January", "February", "March", "April", "May", "June", 
-    "July", "August", "September", "October", "November", "December"
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"
 ];
 
 // --- Main Application Component ---
 export default function JewelryManager() {
-  const [localUser, setLocalUser] = useState(null); // Replaces Firebase 'user'
+  const [user, setUser] = useState(null);
   const [view, setView] = useState('new-sale'); // 'new-sale' | 'history'
   const [sales, setSales] = useState([]);
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectedSale, setSelectedSale] = useState(null); // For viewing receipt details
-  const [dataVersion, setDataVersion] = useState(0); // Used to force data refresh
 
-  // --- Authentication (Local ID Generation) ---
+  // --- Authentication ---
   useEffect(() => {
-    // This runs once to establish the unique local user ID
-    const user = getLocalUser();
-    setLocalUser(user);
-    setLoading(false);
+    // Listen for auth state changes
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setLoading(false); // Stop loading once auth state is determined
+    });
+    return () => unsubscribe();
   }, []);
 
-  // --- Data Sync (Local Storage Load) ---
-  const loadSales = useCallback(() => {
-    setLoading(true);
-    const salesData = getLocalSales();
-    
-    // Sort in memory (Newest first)
-    salesData.sort((a, b) => b.timestamp - a.timestamp);
-    
-    setSales(salesData);
-    setLoading(false);
-  }, []);
-
-  // Effect to load sales when the user is ready or data is updated
-  useEffect(() => {
-    if (localUser) {
-        loadSales();
+  const handleLogin = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      console.error("Login Failed:", error);
+      if (error.code === 'auth/operation-not-allowed') {
+        alert("Configuration Error: Google Sign-In is not enabled in the Firebase Console. Please enable it in Authentication > Sign-in method.");
+      } else {
+        alert(`Login failed: ${error.message}`);
+      }
     }
-  }, [localUser, dataVersion, loadSales]);
-  
-  // Callback to trigger a data reload after a successful save
-  const handleSaleSuccess = () => {
-      // Incrementing dataVersion forces the useEffect above to reload sales
-      setDataVersion(prev => prev + 1);
-      handleNav('history'); // Navigate to history view
   };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setSales([]); // Clear local data on logout
+    } catch (error) {
+      console.error("Logout Failed:", error);
+    }
+  };
+
+  // --- Data Sync ---
+  useEffect(() => {
+    if (!user) return;
+
+    // Path: /artifacts/{appId}/users/{userId}/sales
+    const salesCollection = collection(db, 'artifacts', appId, 'users', user.uid, 'sales');
+    const q = query(salesCollection);
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const salesData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        // Handle timestamp conversion safely
+        timestamp: doc.data().timestamp ? doc.data().timestamp.toDate() : new Date()
+      }));
+
+      // Sort in memory (Newest first)
+      salesData.sort((a, b) => b.timestamp - a.timestamp);
+
+      setSales(salesData);
+      setLoading(false);
+    }, (error) => {
+      console.error("Data Fetch Error:", error);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
 
   // --- Navigation Helper ---
   const handleNav = (target) => {
@@ -145,11 +149,11 @@ export default function JewelryManager() {
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-800 overflow-hidden">
-      
+
       {/* Mobile Sidebar Overlay */}
       {sidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black/50 z-20 md:hidden" 
+        <div
+          className="fixed inset-0 bg-black/50 z-20 md:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -166,39 +170,51 @@ export default function JewelryManager() {
           </div>
           <div>
             <h1 className="text-xl font-bold tracking-tight text-white">GoldLedger</h1>
-            <p className="text-xs text-slate-400">Jewelry Shop POS (Local Mode)</p>
+            <p className="text-xs text-slate-400">Jewelry Shop POS</p>
           </div>
         </div>
 
         <nav className="p-4 space-y-2">
           <button
             onClick={() => handleNav('new-sale')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-              view === 'new-sale' 
-                ? 'bg-amber-500 text-slate-900 font-bold shadow-lg shadow-amber-500/20' 
-                : 'hover:bg-slate-800 text-slate-300'
-            }`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${view === 'new-sale'
+              ? 'bg-amber-500 text-slate-900 font-bold shadow-lg shadow-amber-500/20'
+              : 'hover:bg-slate-800 text-slate-300'
+              }`}
           >
             <Plus size={20} />
             New Sale
           </button>
-          
+
           <button
             onClick={() => handleNav('history')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-              view === 'history' 
-                ? 'bg-amber-500 text-slate-900 font-bold shadow-lg shadow-amber-500/20' 
-                : 'hover:bg-slate-800 text-slate-300'
-            }`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${view === 'history'
+              ? 'bg-amber-500 text-slate-900 font-bold shadow-lg shadow-amber-500/20'
+              : 'hover:bg-slate-800 text-slate-300'
+              }`}
           >
             <History size={20} />
             Sales History
           </button>
         </nav>
-        
+
         <div className="absolute bottom-4 left-4 right-4">
-          <div className="bg-slate-800 rounded-lg p-3 text-xs text-slate-400 text-center">
-            User ID: {localUser ? localUser.uid.slice(0, 6) + '...' : 'Connecting...'}
+          <div className="bg-slate-800 rounded-lg p-3 text-xs text-slate-400">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-8 h-8 rounded-full bg-amber-500/20 text-amber-500 flex items-center justify-center font-bold">
+                {user?.displayName ? user.displayName[0] : 'U'}
+              </div>
+              <div className="overflow-hidden">
+                <p className="font-medium text-white truncate">{user?.displayName || 'User'}</p>
+                <p className="truncate text-[10px]">{user?.email}</p>
+              </div>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center justify-center gap-2 py-2 bg-slate-700 hover:bg-slate-600 rounded text-slate-200 transition-colors"
+            >
+              <LogOut size={14} /> Sign Out
+            </button>
           </div>
         </div>
       </aside>
@@ -208,7 +224,7 @@ export default function JewelryManager() {
         {/* Header */}
         <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-8">
           <div className="flex items-center gap-3">
-            <button 
+            <button
               onClick={() => setSidebarOpen(true)}
               className="md:hidden p-2 text-slate-600 hover:bg-slate-100 rounded-lg"
             >
@@ -225,17 +241,15 @@ export default function JewelryManager() {
 
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto p-4 md:p-8 relative">
-          {!localUser ? (
-            <div className="flex h-full items-center justify-center">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500"></div>
-            </div>
+          {!user ? (
+            <LoginPage onLogin={handleLogin} loading={loading} />
           ) : view === 'new-sale' ? (
-            <NewSaleForm onSuccess={handleSaleSuccess} />
+            <NewSaleForm user={user} appId={appId} onSuccess={() => handleNav('history')} />
           ) : (
-            <SalesHistory 
-              sales={sales} 
-              loading={loading} 
-              onSelect={(sale) => setSelectedSale(sale)} 
+            <SalesHistory
+              sales={sales}
+              loading={loading}
+              onSelect={(sale) => setSelectedSale(sale)}
             />
           )}
         </div>
@@ -249,18 +263,53 @@ export default function JewelryManager() {
   );
 }
 
+// --- Component: Login Page ---
+function LoginPage({ onLogin, loading }) {
+  if (loading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full items-center justify-center">
+      <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center border border-slate-200">
+        <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
+          <Gem size={32} />
+        </div>
+        <h2 className="text-2xl font-bold text-slate-900 mb-2">Welcome Back</h2>
+        <p className="text-slate-500 mb-8">Sign in to access your synchronized jewelry ledger across all your devices.</p>
+
+        <button
+          onClick={onLogin}
+          className="w-full py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-3 bg-slate-900 text-white hover:bg-slate-800 transition-all shadow-lg hover:shadow-xl active:scale-95"
+        >
+          <LogIn size={20} />
+          Sign in with Google
+        </button>
+
+        <p className="text-xs text-slate-400 mt-6">
+          Secure authentication powered by Firebase
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // --- Component: New Sale Form (Manual Entry) ---
-function NewSaleForm({ onSuccess }) {
+function NewSaleForm({ user, appId, onSuccess }) {
   const [formData, setFormData] = useState({
     customerName: '',
     customerPhone: '',
     itemName: 'Gold Ring', // Holds the selected item type (e.g., 'Custom Item')
     customItemName: '', // Holds the actual name if 'Custom Item' is selected
-    huid: '', 
+    huid: '',
     notes: '', // New Notes field
     // Manual Price Fields
     itemBasePrice: '',
-    gstAmount: '', 
+    gstAmount: '',
     discountAmount: '',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -269,77 +318,78 @@ function NewSaleForm({ onSuccess }) {
   const base = parseFloat(formData.itemBasePrice) || 0;
   const gst = parseFloat(formData.gstAmount) || 0;
   const discount = parseFloat(formData.discountAmount) || 0;
-  
+
   const totalPriceBeforeDiscount = base + gst; // Total Price (Item + GST)
   const finalPrice = totalPriceBeforeDiscount - discount; // Final Price (Total - Discount)
 
   // Use the custom name if 'Custom Item' is selected, otherwise use the dropdown value
-  const finalItemName = formData.itemName === 'Custom Item' 
-    ? (formData.customItemName || 'Custom Item') 
+  const finalItemName = formData.itemName === 'Custom Item'
+    ? (formData.customItemName || 'Custom Item')
     : formData.itemName;
 
   const handleChange = (e) => {
     const { name, value } = e.target;
     // Allow empty string or numbers for price fields
-    const updatedValue = ['itemBasePrice', 'gstAmount', 'discountAmount'].includes(name) 
-        ? (value.replace(/[^0-9.]/g, '')) 
-        : value;
+    const updatedValue = ['itemBasePrice', 'gstAmount', 'discountAmount'].includes(name)
+      ? (value.replace(/[^0-9.]/g, ''))
+      : value;
     setFormData(prev => ({ ...prev, [name]: updatedValue }));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+    if (!user) return;
+
     // Basic validation: must have name and a base price
     if (!formData.customerName || !base) {
       console.error("Validation Error: Please fill in the Customer Name and Item Base Price.");
       return;
     }
-    
+
     // Custom item validation
     if (formData.itemName === 'Custom Item' && !formData.customItemName.trim()) {
-        console.error("Validation Error: Please enter a name for the Custom Item.");
-        return;
+      console.error("Validation Error: Please enter a name for the Custom Item.");
+      return;
     }
 
 
     setIsSubmitting(true);
-    
-    // Data structure for the local save function
-    const saleData = {
+    try {
+      // Build payload explicitly so we can log and verify what will be sent to Firestore
+      const payload = {
         ...formData,
-        itemName: finalItemName, 
+        itemName: finalItemName, // Save the resolved name
         // Save numerical values and calculated totals for the ledger
         itemBasePrice: base,
         gstAmount: gst,
         discountAmount: discount,
         totalPriceBeforeDiscount: totalPriceBeforeDiscount,
-        finalPrice: finalPrice, 
-    };
+        finalPrice: finalPrice,
+        // Save the user id in the document for easier querying/ownership checks
+        userId: user.uid,
+        timestamp: serverTimestamp()
+      };
 
-    try {
-      // Use the local storage save function instead of addDoc
-      const success = saveLocalSale(saleData);
-      
-      if (success) {
-          // Reset form
-          setFormData({
-            customerName: '',
-            customerPhone: '',
-            itemName: 'Gold Ring',
-            customItemName: '',
-            huid: '',
-            notes: '',
-            itemBasePrice: '',
-            gstAmount: '', 
-            discountAmount: '',
-          });
-          if (onSuccess) onSuccess(); // Trigger refresh and navigation
-      } else {
-          console.error("Failed to save transaction to local storage.");
-      }
+      // Debug: log the payload (useful while debugging write failures)
+      console.log('Saving sale payload for user:', user.uid, payload);
+
+      await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'sales'), payload);
+      // Reset form
+      setFormData({
+        customerName: '',
+        customerPhone: '',
+        itemName: 'Gold Ring',
+        customItemName: '',
+        huid: '',
+        notes: '',
+        itemBasePrice: '',
+        gstAmount: '',
+        discountAmount: '',
+      });
+      if (onSuccess) onSuccess();
     } catch (error) {
-      console.error("Error saving document: ", error);
+      console.error("Error adding document: ", error);
+      console.error("Failed to save transaction. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
@@ -347,10 +397,10 @@ function NewSaleForm({ onSuccess }) {
 
   return (
     <div className="max-w-4xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
-      
+
       {/* Input Form */}
       <div className="lg:col-span-2 space-y-6">
-        
+
         {/* Customer Details & Notes */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
           <div className="flex items-center gap-2 mb-4 text-amber-600 font-semibold uppercase tracking-wider text-xs">
@@ -359,8 +409,8 @@ function NewSaleForm({ onSuccess }) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label>
-              <input 
-                type="text" 
+              <input
+                type="text"
                 name="customerName"
                 value={formData.customerName}
                 onChange={handleChange}
@@ -371,8 +421,8 @@ function NewSaleForm({ onSuccess }) {
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Phone Number</label>
-              <input 
-                type="tel" 
+              <input
+                type="tel"
                 name="customerPhone"
                 value={formData.customerPhone}
                 onChange={handleChange}
@@ -384,15 +434,15 @@ function NewSaleForm({ onSuccess }) {
 
           <div className="mt-6">
             <div className="flex items-center gap-2 mb-2 text-amber-600 font-semibold uppercase tracking-wider text-xs">
-                <MessageSquare size={16} /> Additional Notes / Remarks
+              <MessageSquare size={16} /> Additional Notes / Remarks
             </div>
             <textarea
-                name="notes"
-                rows="3"
-                value={formData.notes}
-                onChange={handleChange}
-                placeholder="Any specific details about the sale, gemstone description, or payment method..."
-                className="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all resize-none"
+              name="notes"
+              rows="3"
+              value={formData.notes}
+              onChange={handleChange}
+              placeholder="Any specific details about the sale, gemstone description, or payment method..."
+              className="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 outline-none transition-all resize-none"
             />
           </div>
         </div>
@@ -402,13 +452,13 @@ function NewSaleForm({ onSuccess }) {
           <div className="flex items-center gap-2 mb-4 text-amber-600 font-semibold uppercase tracking-wider text-xs">
             <IndianRupee size={16} /> Item & Pricing
           </div>
-          
+
           {/* Item Selector and Custom Input */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div className={formData.itemName === 'Custom Item' ? 'col-span-1' : 'col-span-2'}>
               <label className="block text-sm font-medium text-slate-700 mb-1">Item Description</label>
-              <select 
-                name="itemName" 
+              <select
+                name="itemName"
                 value={formData.itemName}
                 onChange={handleChange}
                 className="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 outline-none"
@@ -423,12 +473,12 @@ function NewSaleForm({ onSuccess }) {
                 <option>Custom Item</option>
               </select>
             </div>
-            
+
             {formData.itemName === 'Custom Item' && (
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Custom Name</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   name="customItemName"
                   value={formData.customItemName}
                   onChange={handleChange}
@@ -437,32 +487,32 @@ function NewSaleForm({ onSuccess }) {
                 />
               </div>
             )}
-            
+
             <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-slate-700 mb-1">Hallmark ID (HUID)</label>
-                <input 
-                  type="text" 
-                  name="huid"
-                  value={formData.huid}
-                  onChange={handleChange}
-                  placeholder="ABC1234"
-                  className="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 outline-none uppercase tracking-widest"
-                />
+              <label className="block text-sm font-medium text-slate-700 mb-1">Hallmark ID (HUID)</label>
+              <input
+                type="text"
+                name="huid"
+                value={formData.huid}
+                onChange={handleChange}
+                placeholder="ABC1234"
+                className="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 outline-none uppercase tracking-widest"
+              />
             </div>
           </div>
-          
+
           <div className="h-px bg-slate-100 my-6"></div>
 
           {/* Manual Price Inputs */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            
+
             {/* 1. Base Price */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Price of Item (Base)</label>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">₹</span>
-                <input 
-                  type="number" 
+                <input
+                  type="number"
                   name="itemBasePrice"
                   value={formData.itemBasePrice}
                   onChange={handleChange}
@@ -478,8 +528,8 @@ function NewSaleForm({ onSuccess }) {
               <label className="block text-sm font-medium text-slate-700 mb-1">GST Applied (in ₹)</label>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">₹</span>
-                <input 
-                  type="number" 
+                <input
+                  type="number"
                   name="gstAmount"
                   value={formData.gstAmount}
                   onChange={handleChange}
@@ -494,8 +544,8 @@ function NewSaleForm({ onSuccess }) {
               <label className="block text-sm font-medium text-slate-700 mb-1">Discount Given (in ₹)</label>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">₹</span>
-                <input 
-                  type="number" 
+                <input
+                  type="number"
                   name="discountAmount"
                   value={formData.discountAmount}
                   onChange={handleChange}
@@ -525,21 +575,21 @@ function NewSaleForm({ onSuccess }) {
               <span>GST Amount</span>
               <span>+ ₹{gst.toLocaleString('en-IN')}</span>
             </div>
-            
+
             <div className="h-px bg-slate-700 my-4"></div>
 
             <div className="flex justify-between font-medium text-base text-white">
               <span>Total Price (Inc. GST)</span>
               <span>₹{totalPriceBeforeDiscount.toLocaleString('en-IN')}</span>
             </div>
-            
+
             <div className="flex justify-between text-red-400">
               <span>Discount Applied</span>
               <span>- ₹{discount.toLocaleString('en-IN')}</span>
             </div>
-            
+
             <div className="h-px bg-slate-700 my-4"></div>
-            
+
             <div className="flex justify-between items-end">
               <span className="text-slate-300 font-medium">Final Price Payable</span>
               <span className="text-3xl font-bold text-amber-500">
@@ -551,11 +601,10 @@ function NewSaleForm({ onSuccess }) {
           <button
             onClick={handleSubmit}
             disabled={isSubmitting}
-            className={`w-full mt-8 py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all ${
-              isSubmitting 
-                ? 'bg-slate-700 text-slate-400 cursor-not-allowed' 
-                : 'bg-amber-500 text-slate-900 hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/25 active:scale-95'
-            }`}
+            className={`w-full mt-8 py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all ${isSubmitting
+              ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+              : 'bg-amber-500 text-slate-900 hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/25 active:scale-95'
+              }`}
           >
             {isSubmitting ? 'Saving...' : (
               <>
@@ -564,9 +613,9 @@ function NewSaleForm({ onSuccess }) {
               </>
             )}
           </button>
-          
+
           <p className="text-xs text-center text-slate-500 mt-4">
-            The final price is saved to your ledger locally in this browser.
+            The final price is saved to your ledger.
           </p>
         </div>
       </div>
@@ -579,7 +628,7 @@ function NewSaleForm({ onSuccess }) {
 function SalesHistory({ sales, loading, onSelect }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [exportMessage, setExportMessage] = useState('');
-  
+
   // Initialize month/year to the current month/year
   const currentDate = new Date();
   const [selectedMonth, setSelectedMonth] = useState(currentDate.getMonth());
@@ -590,56 +639,61 @@ function SalesHistory({ sales, loading, onSelect }) {
     const years = new Set();
     sales.forEach(sale => years.add(sale.timestamp.getFullYear()));
     // Ensure the current year is available even if no sales exist yet
-    years.add(currentYear); 
+    years.add(currentYear);
     return Array.from(years).sort((a, b) => b - a);
   }, [sales, currentYear]);
 
   const filteredSales = useMemo(() => {
-    // Filter by date first
-    const dateFiltered = sales.filter(sale => 
-        sale.timestamp.getMonth() === selectedMonth && 
-        sale.timestamp.getFullYear() === selectedYear
-    );
-
-    // Then filter by search term
-    if (!searchTerm) return dateFiltered;
+    if (!searchTerm) return sales;
     const lower = searchTerm.toLowerCase();
-    return dateFiltered.filter(s => 
+    return sales.filter(s =>
       s.customerName.toLowerCase().includes(lower) ||
-      (s.customerPhone && s.customerPhone.includes(lower)) ||
+      s.customerPhone.includes(lower) ||
       (s.huid && s.huid.toLowerCase().includes(lower))
     );
-  }, [sales, searchTerm, selectedMonth, selectedYear]);
+  }, [sales, searchTerm]);
 
   // Function to determine the final price for display in the table
   const getFinalPrice = (sale) => {
-      // Check for the new manual price field (always present in local storage version)
-      if (typeof sale.finalPrice === 'number') {
-          return sale.finalPrice;
-      }
-      return 0;
+    // New format check (Manual Price)
+    if (typeof sale.finalPrice === 'number') {
+      return sale.finalPrice;
+    }
+    // Old format check (Calculated Price)
+    if (typeof sale.totalPrice === 'number') {
+      return sale.totalPrice;
+    }
+    return 0;
   }
-  
+
   // --- Export Logic ---
   const handleExport = () => {
-    if (filteredSales.length === 0) {
-      setExportMessage(`No sales found for the selected filter combination.`);
+    const monthlySales = sales.filter(sale =>
+      sale.timestamp.getMonth() === selectedMonth &&
+      sale.timestamp.getFullYear() === selectedYear
+    );
+
+    if (monthlySales.length === 0) {
+      setExportMessage(`No sales found for ${MONTHS[selectedMonth]}, ${selectedYear}.`);
       setTimeout(() => setExportMessage(''), 3000);
       return;
     }
 
-    // Define the header row (using tab '\t' as separator for easy spreadsheet import)
+    // Define the header row (using tab '\t' as separator)
     const header = [
-      "Date", "Customer Name", "Phone", "Item Name", "HUID", 
+      "Date", "Customer Name", "Phone", "Item Name", "HUID",
       "Base Price (₹)", "GST Amount (₹)", "Discount (₹)", "Final Price (₹)", "Notes"
     ].join('\t');
 
     // Format the data rows
-    const dataRows = filteredSales.map(sale => {
+    const dataRows = monthlySales.map(sale => {
+      // Determine if it's the new manual format for accurate column data
+      const isNewManualSale = typeof sale.itemBasePrice === 'number';
+
       const dateStr = sale.timestamp.toLocaleDateString();
-      const basePrice = sale.itemBasePrice;
-      const gstAmount = sale.gstAmount;
-      const discount = sale.discountAmount;
+      const basePrice = isNewManualSale ? sale.itemBasePrice : ((sale.weight || 0) * (sale.goldRate || 0));
+      const gstAmount = isNewManualSale ? sale.gstAmount : 'N/A';
+      const discount = isNewManualSale ? sale.discountAmount : 'N/A';
       const finalPrice = getFinalPrice(sale);
 
       return [
@@ -649,8 +703,8 @@ function SalesHistory({ sales, loading, onSelect }) {
         sale.itemName,
         sale.huid || '',
         basePrice.toFixed(2),
-        gstAmount.toFixed(2),
-        discount.toFixed(2),
+        typeof gstAmount === 'number' ? gstAmount.toFixed(2) : gstAmount,
+        typeof discount === 'number' ? discount.toFixed(2) : discount,
         finalPrice.toFixed(2),
         sale.notes || ''
       ].join('\t');
@@ -668,27 +722,27 @@ function SalesHistory({ sales, loading, onSelect }) {
       document.execCommand('copy');
       document.body.removeChild(tempTextArea);
 
-      setExportMessage(`Successfully copied ${filteredSales.length} records.`);
+      setExportMessage(`Successfully copied ${monthlySales.length} records for ${MONTHS[selectedMonth]}.`);
     } catch (err) {
       setExportMessage('Failed to copy. Please check console for details.');
       console.error('Copy command failed:', err);
     }
-    
+
     setTimeout(() => setExportMessage(''), 3000);
   };
-  
+
   // --- END Export Logic ---
 
   return (
     <div className="space-y-6">
-      
+
       {/* Search & Export Controls */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
         <div className="relative mb-4">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-          <input 
-            type="text" 
-            placeholder="Search by customer name, phone, or HUID..." 
+          <input
+            type="text"
+            placeholder="Search by customer name, phone, or HUID..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 outline-none"
@@ -701,26 +755,26 @@ function SalesHistory({ sales, loading, onSelect }) {
           <div className="w-full sm:w-1/3">
             <label className="block text-xs font-medium text-slate-500 mb-1">Select Month</label>
             <select
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
-                className="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 outline-none"
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
+              className="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 outline-none"
             >
-                {MONTHS.map((name, index) => (
-                    <option key={index} value={index}>{name}</option>
-                ))}
+              {MONTHS.map((name, index) => (
+                <option key={index} value={index}>{name}</option>
+              ))}
             </select>
           </div>
 
           <div className="w-full sm:w-1/3">
             <label className="block text-xs font-medium text-slate-500 mb-1">Select Year</label>
             <select
-                value={selectedYear}
-                onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-                className="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 outline-none"
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+              className="w-full p-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-amber-500 outline-none"
             >
-                {availableYears.map(year => (
-                    <option key={year} value={year}>{year}</option>
-                ))}
+              {availableYears.map(year => (
+                <option key={year} value={year}>{year}</option>
+              ))}
             </select>
           </div>
 
@@ -729,14 +783,14 @@ function SalesHistory({ sales, loading, onSelect }) {
             className="w-full sm:w-1/3 py-3 rounded-xl font-bold flex items-center justify-center gap-2 bg-slate-800 text-white hover:bg-slate-700 transition-colors"
           >
             <ClipboardCheck size={20} />
-            Copy Filtered Report
+            Copy Monthly Report
           </button>
         </div>
-        
+
         {exportMessage && (
-            <p className={`mt-3 text-center text-sm font-medium ${exportMessage.startsWith('Successfully') ? 'text-green-600' : 'text-red-600'}`}>
-                {exportMessage}
-            </p>
+          <p className={`mt-3 text-center text-sm font-medium ${exportMessage.startsWith('Successfully') ? 'text-green-600' : 'text-red-600'}`}>
+            {exportMessage}
+          </p>
         )}
       </div>
 
@@ -746,7 +800,7 @@ function SalesHistory({ sales, loading, onSelect }) {
       ) : filteredSales.length === 0 ? (
         <div className="text-center py-12 text-slate-400 bg-white rounded-2xl border border-dashed border-slate-300">
           <Gem className="mx-auto mb-2 opacity-20" size={48} />
-          <p>No sales records found for the selected filters.</p>
+          <p>No sales records found.</p>
         </div>
       ) : (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -792,7 +846,7 @@ function SalesHistory({ sales, loading, onSelect }) {
                       </span>
                     </td>
                     <td className="p-4 text-center">
-                      <button 
+                      <button
                         onClick={() => onSelect(sale)}
                         className="p-2 hover:bg-slate-100 rounded-lg text-amber-600 transition-colors"
                         title="View Receipt"
@@ -811,27 +865,47 @@ function SalesHistory({ sales, loading, onSelect }) {
   );
 }
 
-// --- Component: Receipt Modal (Unchanged logic, simplified display logic) ---
+// --- Component: Receipt Modal (Unchanged) ---
 function ReceiptModal({ sale, onClose }) {
   if (!sale) return null;
-  
-  // Since we only use the new manual sale structure now, we can simplify this.
-  const isNewManualSale = typeof sale.itemBasePrice === 'number'; // Should always be true
 
-  let finalPrice = sale.finalPrice || 0;
-  let baseAmountDisplay = isNewManualSale ? `₹${sale.itemBasePrice.toLocaleString('en-IN')}` : 'N/A';
-  let gstAmountDisplay = isNewManualSale ? `₹${sale.gstAmount.toLocaleString('en-IN')}` : 'N/A';
-  let discountAmountDisplay = isNewManualSale ? `₹${sale.discountAmount.toLocaleString('en-IN')}` : 'N/A';
-  let totalAmountBeforeDiscountDisplay = isNewManualSale ? `₹${sale.totalPriceBeforeDiscount.toLocaleString('en-IN')}` : 'N/A';
+  // Check if it's a new manual sale structure
+  const isNewManualSale = typeof sale.itemBasePrice === 'number';
+
+  let finalPrice = 0;
+  let baseAmountDisplay = '';
+  let gstAmountDisplay = '';
+  let discountAmountDisplay = '';
+  let totalAmountBeforeDiscountDisplay = '';
+
+  if (isNewManualSale) {
+    // New Manual Sale Logic
+    finalPrice = sale.finalPrice;
+    baseAmountDisplay = `₹${sale.itemBasePrice.toLocaleString('en-IN')}`;
+    gstAmountDisplay = `₹${sale.gstAmount.toLocaleString('en-IN')}`;
+    discountAmountDisplay = `₹${sale.discountAmount.toLocaleString('en-IN')}`;
+    totalAmountBeforeDiscountDisplay = `₹${sale.totalPriceBeforeDiscount.toLocaleString('en-IN')}`;
+
+  } else {
+    // Old Calculated Sale Logic (Kept for historical data compatibility)
+    finalPrice = sale.totalPrice;
+    const basePrice = (sale.weight || 0) * (sale.goldRate || 0);
+
+    // Note: The old structure did not track GST/Discount explicitly.
+    baseAmountDisplay = `₹${basePrice.toLocaleString('en-IN')}`;
+    gstAmountDisplay = 'N/A (Included in Total)';
+    discountAmountDisplay = 'N/A (Not Recorded)';
+    totalAmountBeforeDiscountDisplay = `₹${sale.totalPrice.toLocaleString('en-IN')}`;
+  }
 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
       <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden relative animate-in fade-in zoom-in duration-200">
-        
+
         {/* Header */}
         <div className="bg-amber-500 p-6 text-center relative">
-          <button 
+          <button
             onClick={onClose}
             className="absolute right-4 top-4 p-1 bg-black/10 hover:bg-black/20 text-slate-900 rounded-full transition-colors"
           >
@@ -846,7 +920,7 @@ function ReceiptModal({ sale, onClose }) {
 
         {/* Body */}
         <div className="p-6 space-y-6">
-          
+
           <div className="flex justify-between items-start text-sm border-b border-dashed border-slate-200 pb-4">
             <div>
               <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Customer</p>
@@ -867,10 +941,11 @@ function ReceiptModal({ sale, onClose }) {
                 <span>{sale.itemName}</span>
                 {sale.weight && <span className="text-slate-500">({sale.weight}g)</span>}
               </div>
-              
+
               <div className="h-px bg-slate-200"></div>
 
-              {isNewManualSale && (
+              {/* Display based on structure */}
+              {isNewManualSale ? (
                 <>
                   <div className="flex justify-between text-slate-500">
                     <span>Base Price (Item Value)</span>
@@ -889,8 +964,19 @@ function ReceiptModal({ sale, onClose }) {
                     <span>- {discountAmountDisplay}</span>
                   </div>
                 </>
+              ) : (
+                <>
+                  <div className="flex justify-between text-slate-500">
+                    <span>{sale.itemName && sale.itemName.includes('Silver') ? 'Silver' : 'Gold'} Rate / Gram</span>
+                    <span>₹{sale.goldRate}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-500">
+                    <span>Making Charges</span>
+                    <span>₹{sale.makingCharges.toLocaleString('en-IN')}</span>
+                  </div>
+                </>
               )}
-              
+
               {sale.huid && (
                 <div className="pt-2 flex items-center gap-2 text-xs text-amber-700 font-medium">
                   <Hash size={12} /> HUID: {sale.huid}
@@ -901,10 +987,10 @@ function ReceiptModal({ sale, onClose }) {
 
           {sale.notes && (
             <div>
-                <p className="text-xs text-slate-400 uppercase tracking-wide mb-2">Sale Notes</p>
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-sm text-slate-600 italic whitespace-pre-wrap">
-                    {sale.notes}
-                </div>
+              <p className="text-xs text-slate-400 uppercase tracking-wide mb-2">Sale Notes</p>
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-sm text-slate-600 italic whitespace-pre-wrap">
+                {sale.notes}
+              </div>
             </div>
           )}
 
@@ -919,7 +1005,7 @@ function ReceiptModal({ sale, onClose }) {
 
         {/* Footer */}
         <div className="p-4 bg-slate-50 border-t border-slate-100 text-center">
-          <button 
+          <button
             className="text-sm font-medium text-amber-600 hover:text-amber-700"
             onClick={() => {
               const text = `Receipt for ${sale.customerName}\nItem: ${sale.itemName}\nFinal Price: ₹${finalPrice.toLocaleString('en-IN')}`;
@@ -930,7 +1016,7 @@ function ReceiptModal({ sale, onClose }) {
               tempTextArea.select();
               document.execCommand('copy');
               document.body.removeChild(tempTextArea);
-              
+
               console.log('Receipt details copied to clipboard!');
             }}
           >
