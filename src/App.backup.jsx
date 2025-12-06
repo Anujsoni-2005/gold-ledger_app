@@ -19,8 +19,7 @@ import {
   LogIn,
   Download,
   Share2,
-  FileText,
-  Trash2
+  FileText
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -39,8 +38,6 @@ import {
   getFirestore,
   collection,
   addDoc,
-  deleteDoc,
-  doc,
   onSnapshot,
   serverTimestamp,
   query
@@ -177,21 +174,6 @@ export default function JewelryManager() {
     setSelectedSale(null);
   };
 
-  // --- Delete Sale ---
-  const handleDeleteSale = async (sale) => {
-    if (!window.confirm(`Are you sure you want to delete the sale for ${sale.customerName}?`)) {
-      return;
-    }
-    try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'sales', sale.id));
-      alert("Sale deleted successfully.");
-      // State updates via onSnapshot automatically
-    } catch (error) {
-      console.error("Error deleting sale:", error);
-      alert("Failed to delete sale.");
-    }
-  };
-
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-800 overflow-hidden">
 
@@ -295,7 +277,6 @@ export default function JewelryManager() {
               sales={sales}
               loading={loading}
               onSelect={(sale) => setSelectedSale(sale)}
-              onDelete={handleDeleteSale}
             />
           )}
         </div>
@@ -680,7 +661,7 @@ function NewSaleForm({ user, appId, onSuccess }) {
 }
 
 // --- Component: Sales History (UPDATED for Export) ---
-function SalesHistory({ sales, loading, onSelect, onDelete }) {
+function SalesHistory({ sales, loading, onSelect }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [exportMessage, setExportMessage] = useState('');
 
@@ -1098,13 +1079,6 @@ function SalesHistory({ sales, loading, onSelect, onDelete }) {
                           title="Share on WhatsApp"
                         >
                           <Share2 size={18} />
-                        </button>
-                        <button
-                          onClick={() => onDelete(sale)}
-                          className="p-2 hover:bg-red-50 rounded-lg text-red-500 transition-colors"
-                          title="Delete Record"
-                        >
-                          <Trash2 size={18} />
                         </button>
                       </div>
                     </td>
