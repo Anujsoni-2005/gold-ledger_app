@@ -280,7 +280,7 @@ export default function JewelryManager() {
             </h2>
           </div>
           <div className="text-sm text-slate-500 hidden sm:block">
-            {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            {new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </div>
         </header>
 
@@ -709,7 +709,7 @@ function SalesHistory({ sales, loading, onSelect, onDelete }) {
 
     doc.setFontSize(12);
     doc.setTextColor(100, 100, 100);
-    doc.text(`Date: ${sale.timestamp.toLocaleDateString()}`, 105, 30, null, null, "center");
+    doc.text(`Date: ${sale.timestamp.toLocaleDateString('en-GB')}`, 105, 30, null, null, "center");
 
     // Customer Details
     doc.setFontSize(14);
@@ -1052,7 +1052,7 @@ function SalesHistory({ sales, loading, onSelect, onDelete }) {
                     <td className="p-4">
                       <div className="flex flex-col">
                         <span className="font-medium text-slate-700">
-                          {sale.timestamp.toLocaleDateString()}
+                          {sale.timestamp.toLocaleDateString('en-GB')}
                         </span>
                         <span className="text-xs text-slate-400">
                           {sale.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
