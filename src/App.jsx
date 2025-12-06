@@ -1183,7 +1183,7 @@ function ReceiptModal({ sale, onClose }) {
             </div>
             <div className="text-right">
               <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">Date</p>
-              <p className="font-medium text-slate-700">{sale.timestamp.toLocaleDateString()}</p>
+              <p className="font-medium text-slate-700">{sale.timestamp.toLocaleDateString('en-GB')}</p>
               <p className="text-slate-500">{sale.timestamp.toLocaleTimeString()}</p>
             </div>
           </div>
